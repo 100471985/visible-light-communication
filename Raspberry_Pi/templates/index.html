@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VLC Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💡</text></svg>">
+    <style>
+        :root { --bg: #f0f2f5; --card: #ffffff; --primary: #007bff; --accent: #ffc107; --danger: #dc3545; --success: #28a745; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); display: flex; justify-content: center; padding: 20px; margin: 0; }
+        .dashboard { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 20px; }
+        .card { background: var(--card); padding: 20px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h2, h3 { margin: 0 0 15px 0; color: #333; font-size: 1.1rem; }
+        .bulb-box { text-align: center; padding: 15px; font-size: 60px; transition: 0.3s; filter: grayscale(1); opacity: 0.3; }
+        .bulb-box.on { filter: grayscale(0); opacity: 1; drop-shadow: 0 0 20px var(--accent); }
+        .bulb-box.transmitting { animation: blink 0.2s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        .btn { width: 100%; padding: 12px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-toggle { background: var(--danger); color: white; }
+        .btn-toggle.active { background: var(--success); }
+        .btn-send { background: var(--primary); color: white; margin-top: 10px; }
+        .btn-shutdown { background: none; color: #888; border: 1px solid #ddd; font-size: 11px; margin-top: 10px; }
+        .row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+        input[type="range"] { flex-grow: 1; margin: 0 15px; accent-color: var(--primary); }
+        input[type="number"] { width: 50px; padding: 8px; border-radius: 6px; border: 1px solid #ddd; }
+        .badge { font-size: 10px; background: #e9ecef; padding: 3px 10px; border-radius: 10px; color: #495057; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="card">
+        <div class="row"><h2>Estado Emisor</h2><span id="status" class="badge">IDLE</span></div>
+        <div id="bulb" class="bulb-box">💡</div>
+        <button id="toggleBtn" class="btn btn-toggle" onclick="toggle()">SISTEMA OFF</button>
+    </div>
+    <div class="card">
+        <h3>Parámetros</h3>
+        <div class="row"><span>Duty Cycle</span><span id="dutyVal">50%</span></div>
+        <input type="range" id="duty" min="0" max="100" value="50" oninput="updateVisualDuty()" onchange="sendDutyNetwork()">
+    </div>
+    <div class="card">
+        <h3>Transmisión FSK</h3>
+        <div class="row"><span>Dígito (0-9)</span><input type="number" id="digit" min="0" max="9" value="0"></div>
+        <button class="btn btn-send" onclick="send()">TRANSMITIR</button>
+    </div>
+    <button class="btn-shutdown" onclick="requestShutdown()">Apagar Raspberry Pi (Safe Shutdown)</button>
+</div>
+<script>
+    let active = false;
+
+    async function toggle() {
+        active = !active;
+        const btn = document.getElementById('toggleBtn');
+        const bulb = document.getElementById('bulb');
+        btn.innerText = active ? "SISTEMA ON" : "SISTEMA OFF";
+        btn.classList.toggle('active', active);
+        bulb.classList.toggle('on', active);
+        
+        await fetch('/api/control', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ action: active ? 'ON' : 'OFF', duty: document.getElementById('duty').value })
+        });
+    }
+
+    // Solo actualiza el texto en pantalla (muy rápido, sin red)
+    function updateVisualDuty() {
+        document.getElementById('dutyVal').innerText = document.getElementById('duty').value + "%";
+    }
+
+    // Esta función solo se dispara al SOLTAR el slider
+    async function sendDutyNetwork() {
+        const val = document.getElementById('duty').value;
+        console.log("Enviando duty final a la red:", val);
+        if(active) {
+            await fetch('/api/control', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ action: 'UPDATE', duty: val })
+            });
+        }
+    }
+
+    async function send() {
+        if(!active) return alert("Enciende el sistema primero");
+        const bulb = document.getElementById('bulb');
+        const status = document.getElementById('status');
+        bulb.classList.add('transmitting');
+        status.innerText = "ENVIANDO...";
+        
+        await fetch('/api/transmit', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ digit: document.getElementById('digit').value, duty: document.getElementById('duty').value })
+        });
+        
+        setTimeout(() => { 
+            bulb.classList.remove('transmitting'); 
+            status.innerText = "IDLE"; 
+        }, 1000);
+    }
+
+    async function requestShutdown() {
+        if(confirm("¿Apagar Raspberry?")) { 
+            await fetch('/api/shutdown', { method: 'POST' }); 
+            alert("Apagando..."); 
+        }
+    }
+</script>
+</body>
+</html>
